@@ -1,65 +1,117 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <omp.h>
+#include <stdio.h>
+#include <sys/time.h>
 
-void Trap(int a, int b, int n, int *global_result_p);
+#define N 3005
+#define INF 100005
+
+struct user_definedMin { 
+    int val; 
+    int index; 
+}; 
+#pragma omp declare reduction(minimum : struct user_definedMin : omp_out = omp_in.val < omp_out.val ? omp_in : omp_out)
+
+int n, adj[N][N], selected[N], min_edge[N][2], result[N][2];
 
 int tmin(int a, int b) {
-    return (a > b) ? b : a;
+    return (a < b) ? a : b;
 }
 
-int main(int argc, char* argv[]) {
+int tmax(int a, int b) {
+    return (a > b) ? a : b;
+}
 
-    int global_sum = 0;
-    int a = 3;
-    int b = 5;
-    int thread_count = strtol(argv[1], NULL, 10);
-    int n = 11;
 
-    #pragma omp parallel num_threads(thread_count)
-    {
-        Trap(a, b, n, &global_sum);
+int main() 
+{
+    int threads = omp_get_max_threads();
+
+    scanf("%d", &n);
+    for(int i = 0; i < n; i++) {
+        for(int j = 0; j < n; j++) {
+            scanf("%d", &adj[i][j]);
+            if(adj[i][j] == -1) adj[i][j] = INF;
+        }
+
+        selected[i] = 0;
+        min_edge[i][0] = INF;
+        min_edge[i][1] = -1;
     }
 
-    int glob = 0;
-    #pragma omp parallel num_threads(thread_count)
-    {
-        Trap(5, 7, 25, &glob);
-    }
-    
+    int total_weight = 0;
+    min_edge[0][0] = 0;
 
-    printf("Result: %d\n", global_sum);
+    int cur = 0;
+
+    struct timeval stop, start;
+    gettimeofday(&start, NULL);
+    for(int i = 0; i < n; i++) {
+        int t = -1;
+
+        int index = -1;
+        int fmin = INF;
+        int j;
+        #pragma omp parallel num_threads(threads)
+        {
+            int index_local = index;
+            int fmin_local = fmin;
+            #pragma omp for nowait 
+            for(j = 0; j < n; j++) {
+                if(selected[j] == 0 && min_edge[j][0] < fmin_local) {
+                    fmin_local = min_edge[j][0];
+                    index_local = j;
+                }
+            }
+            #pragma omp critical 
+            {
+                if(fmin_local < fmin) {
+                    fmin = fmin_local;
+                    index = index_local;
+                }
+            }
+        }
+        t = index;
+        selected[t] = 1;
+        total_weight += min_edge[t][0];
+        if(min_edge[t][1] != -1) {
+            result[cur][0] = tmin(t, min_edge[t][1]);
+            result[cur][1] = tmax(t, min_edge[t][1]);
+            cur++;
+        }
+        int to;
+        #pragma omp parallel for num_threads(threads) private(to) shared(n)
+        for(to = 0; to < n; to++) {
+            if(adj[t][to] < min_edge[to][0]) {
+                min_edge[to][0] = adj[t][to];
+                min_edge[to][1] = t;
+            }
+        }
+    }
+    gettimeofday(&stop, NULL);
+
+    for(int i = cur - 1; i >= 1; i--) {
+        for(int j = 0; j < i; j++) {
+            if(result[j][0] > result[j + 1][0] || (result[j][0] == result[j + 1][0] && result[j][1] > result[j + 1][1])) {
+                int temp1 = result[j + 1][0];
+                result[j + 1][0] = result[j][0];
+                result[j][0] = temp1;
+
+                int temp2 = result[j + 1][1];
+                result[j + 1][1] = result[j][1];
+                result[j][1] = temp2;
+            }
+        }
+    }
+
+    printf("%d\n", total_weight);
+
+    for(int i = 0; i < cur; i++) {
+        printf("%d-%d\n", result[i][0], result[i][1]);
+    }
+    printf("Waktu Eksekusi: %lu ms\n", (stop.tv_sec - start.tv_sec) * 1000 + (stop.tv_usec - start.tv_usec) / 1000);
+
+
+
+
     return 0;
-}
-
-// n = 8
-// a = 3, b = 5
-
-// 3+(3+5)+(3+5*2)+...+(3+5*7)
-
-// 0 1 2 3 4 5 6 7 8 9
-
-// 0 3 6 9
-
-void Trap(int a, int b, int n, int *global_result_p) {
-    int my_rank = omp_get_thread_num();
-    int thread_count = omp_get_num_threads();
-
-    int local_n = n / thread_count + !(n % thread_count == 0);
-
-    
-    int local_i = local_n * my_rank;
-    if(local_i >= n) return;
-    int local_max_i = tmin(n - 1, local_i + local_n - 1);
-
-    printf("from %d: %d -> %d\n", my_rank, local_i, local_max_i);
-
-    int local_sum = 0;
-    for(int i = local_i; i <= local_max_i; i++) {
-        local_sum += a + b * i;
-    }
-
-    #pragma omp critical
-    *global_result_p += local_sum;
-    
 }
